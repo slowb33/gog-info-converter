@@ -1,0 +1,110 @@
+#!/usr/bin/env python
+import sys
+import re
+import os
+
+try:
+    import markdown
+except ImportError:
+    print("Error: The 'markdown' library is required. Please install it using your system's package manager (e.g., 'sudo pacman -S python-markdown') or with pip/uv.", file=sys.stderr)
+    sys.exit(1)
+
+def format_changelog(changelog_text):
+    """
+    Converts changelog text to HTML using the markdown library.
+    If it already contains HTML, it's returned as is.
+    """
+    text = changelog_text.strip()
+
+    # If it already looks like HTML, don't touch it
+    if re.search(r'<(h[1-6]|ul|li|hr|p|div|table)>', text, re.IGNORECASE):
+        return text
+
+    # Use the markdown library with extensions for tables and better formatting
+    html = markdown.markdown(text, extensions=['tables', 'fenced_code'])
+    return html
+
+
+def create_html_from_info(file_path):
+    """
+    Reads a GOG !info.txt file and converts it into a complete HTML file with a dark theme,
+    then prints it to standard output.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except FileNotFoundError:
+        print(f"Error: File not found at {file_path}", file=sys.stderr)
+        sys.exit(1)
+
+    # --- Parsing Logic ---
+    changelog_marker = re.compile(r'changelog\s*\.{5,}:', re.IGNORECASE)
+    parts = changelog_marker.split(content)
+    metadata_part = parts[0]
+    changelog_part = parts[1] if len(parts) > 1 else ''
+
+    title_match = re.search(r"title\s*\.{5,}\s*(.*)", metadata_part, re.IGNORECASE)
+    title = title_match.group(1).strip().replace('_', ' ').title() if title_match else "Game Information"
+
+    meta_html = "<h2>Game Details</h2>\n<dl>\n"
+    meta_regex = re.compile(r"^(.+?)\s*\.{5,}\s*(.+)$", re.MULTILINE)
+    for match in meta_regex.finditer(metadata_part):
+        key = match.group(1).strip().replace('_', ' ').title()
+        value = match.group(2).strip()
+        if key.lower() == 'title': continue
+        if key.lower() == 'url':
+            meta_html += f"  <dt>{key}</dt>\n  <dd><a href=\"{value}\" target=\"_blank\">{value}</a></dd>\n"
+        else:
+            meta_html += f"  <dt>{key}</dt>\n  <dd>{value}</dd>\n"
+    meta_html += "</dl>\n"
+
+    extras_html = "<h2>Extras</h2>\n<ul>\n"
+    extras_match = re.search(r"extras\s*\.{5,}:([\s\S]*?)(?=changelog|$)", content, re.DOTALL | re.IGNORECASE)
+    if extras_match and extras_match.group(1).strip():
+        for extra in extras_match.group(1).strip().splitlines():
+            if extra.strip():
+                clean_extra = re.sub(r"\[(.*?)\] -- ", r"<strong>\1:</strong> ", extra.strip())
+                extras_html += f"  <li>{clean_extra}</li>\n"
+    else:
+        extras_html += "<li>No extras listed.</li>"
+    extras_html += "</ul>\n"
+
+    # --- Process the changelog using the library-based formatter ---
+    formatted_changelog = format_changelog(changelog_part)
+
+    # --- HTML Template with Dark Theme CSS (with compact list styles) ---
+    html_output = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"><title>{title}</title>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; margin: 0; background-color: #1e1e1e; color: #d4d4d4; }}
+        .container {{ max-width: 800px; margin: 2em auto; background: #2d2d2d; padding: 2em; border-radius: 8px; border: 1px solid #444; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }}
+        h1, h2, h3 {{ color: #ffffff; border-bottom: 1px solid #555; padding-bottom: 0.3em; }}
+        h4, h5 {{ color: #fafafa; margin-top: 1.5em; }}
+        p {{ margin-top: 0; margin-bottom: 0.8em; }}
+        dt {{ font-weight: bold; color: #cccccc; float: left; width: 120px; clear: left; }}
+        dd {{ margin-left: 140px; margin-bottom: 10px; }}
+        a {{ color: #68a0ff; text-decoration: none; }}
+        a:hover {{ text-decoration: underline; }}
+        strong {{ color: #c8c8c8; }}
+        hr {{ border: 0; border-top: 1px solid #555; margin: 1.5em 0; }}
+        ul, ol {{ padding-left: 20px; }}
+        li {{ margin-bottom: 0.2em; }}
+        li p {{ margin-bottom: 0.1em; }} /* This new rule targets paragraphs inside list items */
+        table {{ border-collapse: collapse; width: 100%; margin-bottom: 1em; }}
+        th, td {{ border: 1px solid #555; padding: 8px; text-align: left; }}
+        th {{ background-color: #3a3a3a; font-weight: bold; }}
+        code {{ background-color: #444; padding: 2px 5px; border-radius: 4px; font-family: monospace; }}
+    </style>
+</head>
+<body><div class="container"><h1>{title}</h1><div class="content">{meta_html}{extras_html}<h2>Changelog</h2>{formatted_changelog}</div></div></body>
+</html>"""
+    print(html_output)
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python gog-convert.py <path_to_!info.txt>", file=sys.stderr)
+        sys.exit(1)
+    create_html_from_info(sys.argv[1])
+
