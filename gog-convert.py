@@ -15,15 +15,44 @@ def format_changelog(changelog_text):
     If it already contains HTML, it's returned as is.
     """
     text = changelog_text.strip()
-
-    # If it already looks like HTML, don't touch it
     if re.search(r'<(h[1-6]|ul|li|hr|p|div|table)>', text, re.IGNORECASE):
         return text
-
-    # Use the markdown library with extensions for tables and better formatting
     html = markdown.markdown(text, extensions=['tables', 'fenced_code'])
     return html
 
+def format_game_items(content):
+    """
+    Parses the indented structure of the 'game items' section and formats it into
+    HTML with subheadings and lists.
+    """
+    if not content:
+        return ""
+    
+    # Split the content by subsection headers (e.g., "standalone...:") but keep them as delimiters
+    subsections = re.split(r'(^\s*[a-zA-Z ]+\s*\.{3,}:)', content, flags=re.MULTILINE)
+    
+    html = ""
+    # Start from index 1 because the first split element is usually empty space before the first header
+    for i in range(1, len(subsections), 2):
+        # Header is the delimiter, body is the content that follows
+        header = subsections[i].strip().replace('...:', '').replace('....:', '').title()
+        body = subsections[i+1]
+        
+        html += f"<h4>{header}</h4>\n<ul>\n"
+        
+        # This regex handles multi-line items with optional versions
+        item_pattern = re.compile(r'^\s*\[(.*?)\] -- (.*?)(?:\n\s*version: (.*?))?$', re.MULTILINE)
+        
+        for match in item_pattern.finditer(body):
+            filename, description, version = match.groups()
+            html += f"<li><strong>{filename}:</strong> {description}"
+            if version:
+                html += f"<br><small class='version-info'>Version: {version.strip()}</small>"
+            html += "</li>\n"
+            
+        html += "</ul>\n"
+        
+    return html
 
 def create_html_from_info(file_path):
     """
@@ -37,12 +66,40 @@ def create_html_from_info(file_path):
         print(f"Error: File not found at {file_path}", file=sys.stderr)
         sys.exit(1)
 
-    # --- Parsing Logic ---
-    changelog_marker = re.compile(r'changelog\s*\.{5,}:', re.IGNORECASE)
-    parts = changelog_marker.split(content)
-    metadata_part = parts[0]
-    changelog_part = parts[1] if len(parts) > 1 else ''
+    # --- Line-by-line parsing logic for robustness ---
+    lines = content.splitlines()
+    
+    section_buffers = {
+        'metadata': [],
+        'game items': [],
+        'extras': [],
+        'changelog': [],
+        'gog messages': []
+    }
+    
+    current_section_key = 'metadata'
+    header_pattern = re.compile(r'^([a-zA-Z ]+)\s*\.{3,}:', re.IGNORECASE)
 
+    for line in lines:
+        match = header_pattern.match(line)
+        # Check if the line is a section header
+        if match:
+            section_name = match.group(1).strip().lower()
+            if section_name in section_buffers:
+                current_section_key = section_name
+                continue  # Skip adding the header line itself to the content
+
+        # Append the line to the buffer for the current section
+        section_buffers[current_section_key].append(line)
+
+    # Join the collected lines for each section
+    metadata_part = '\n'.join(section_buffers['metadata'])
+    game_items_content = '\n'.join(section_buffers['game items'])
+    extras_content = '\n'.join(section_buffers['extras'])
+    changelog_content = '\n'.join(section_buffers['changelog'])
+    gog_messages_content = '\n'.join(section_buffers['gog messages'])
+
+    # --- Title and Metadata Parsing ---
     title_match = re.search(r"title\s*\.{5,}\s*(.*)", metadata_part, re.IGNORECASE)
     title = title_match.group(1).strip().replace('_', ' ').title() if title_match else "Game Information"
 
@@ -58,47 +115,64 @@ def create_html_from_info(file_path):
             meta_html += f"  <dt>{key}</dt>\n  <dd>{value}</dd>\n"
     meta_html += "</dl>\n"
 
-    extras_html = "<h2>Extras</h2>\n<ul>\n"
-    extras_match = re.search(r"extras\s*\.{5,}:([\s\S]*?)(?=changelog|$)", content, re.DOTALL | re.IGNORECASE)
-    if extras_match and extras_match.group(1).strip():
-        for extra in extras_match.group(1).strip().splitlines():
+    # --- GOG Messages Section ---
+    gog_messages_html = ""
+    if gog_messages_content.strip():
+        gog_messages_html = f"<h2>GOG Messages</h2>\n<div class=\"message-box\">{markdown.markdown(gog_messages_content)}</div>\n"
+
+    # --- Game Items Section (uses the new detailed formatter) ---
+    game_items_html = ""
+    if game_items_content.strip():
+        game_items_html = "<h2>Game Items</h2>\n" + format_game_items(game_items_content)
+
+    # --- Extras Section ---
+    extras_html = ""
+    if extras_content.strip():
+        extras_html = "<h2>Extras</h2>\n<ul>\n"
+        for extra in extras_content.strip().splitlines():
             if extra.strip():
                 clean_extra = re.sub(r"\[(.*?)\] -- ", r"<strong>\1:</strong> ", extra.strip())
                 extras_html += f"  <li>{clean_extra}</li>\n"
-    else:
-        extras_html += "<li>No extras listed.</li>"
-    extras_html += "</ul>\n"
+        extras_html += "</ul>\n"
 
-    # --- Process the changelog using the library-based formatter ---
-    formatted_changelog = format_changelog(changelog_part)
+    # --- Changelog Section ---
+    changelog_html = ""
+    if changelog_content.strip():
+        formatted_changelog = format_changelog(changelog_content)
+        changelog_html = f"<h2>Changelog</h2>{formatted_changelog}"
 
-    # --- HTML Template with Dark Theme CSS (with compact list styles) ---
+    # --- Final HTML Assembly ---
     html_output = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8"><title>{title}</title>
     <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; margin: 0; background-color: #1e1e1e; color: #d4d4d4; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.4; margin: 0; background-color: #1e1e1e; color: #d4d4d4; }}
         .container {{ max-width: 800px; margin: 2em auto; background: #2d2d2d; padding: 2em; border-radius: 8px; border: 1px solid #444; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }}
-        h1, h2, h3 {{ color: #ffffff; border-bottom: 1px solid #555; padding-bottom: 0.3em; }}
-        h4, h5 {{ color: #fafafa; margin-top: 1.5em; }}
-        p {{ margin-top: 0; margin-bottom: 0.8em; }}
+        h1 {{ font-size: 1.8em; margin-top: 0; color: #ffffff; border-bottom: 1px solid #555; padding-bottom: 0.3em; }}
+        h2 {{ font-size: 1.4em; color: #ffffff; border-bottom: 1px solid #555; padding-bottom: 0.3em; }}
+        h3 {{ font-size: 1.1em; color: #ffffff; border-bottom: 1px solid #555; padding-bottom: 0.3em; }}
+        h4, h5 {{ color: #fafafa; margin-top: 1.2em; font-size: 1.0em; }}
+        p {{ margin-top: 0; margin-bottom: 0.7em; }}
         dt {{ font-weight: bold; color: #cccccc; float: left; width: 120px; clear: left; }}
-        dd {{ margin-left: 140px; margin-bottom: 10px; }}
+        dd {{ margin-left: 140px; margin-bottom: 8px; }}
         a {{ color: #68a0ff; text-decoration: none; }}
         a:hover {{ text-decoration: underline; }}
         strong {{ color: #c8c8c8; }}
         hr {{ border: 0; border-top: 1px solid #555; margin: 1.5em 0; }}
         ul, ol {{ padding-left: 20px; }}
-        li {{ margin-bottom: 0.2em; }}
-        li p {{ margin-bottom: 0.1em; }} /* This new rule targets paragraphs inside list items */
+        li {{ margin-bottom: 0.1em; }}
+        li p {{ margin-bottom: 0.1em; }}
         table {{ border-collapse: collapse; width: 100%; margin-bottom: 1em; }}
         th, td {{ border: 1px solid #555; padding: 8px; text-align: left; }}
         th {{ background-color: #3a3a3a; font-weight: bold; }}
-        code {{ background-color: #444; padding: 2px 5px; border-radius: 4px; font-family: monospace; }}
+        code, pre {{ background-color: #252526; font-family: monospace; }}
+        pre {{ padding: 1em; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; }}
+        .message-box {{ background-color: #3a3a3a; border-left: 4px solid #68a0ff; padding: 0.5em 1.5em; margin-bottom: 1.5em; border-radius: 4px; }}
+        .version-info {{ color: #9e9e9e; font-style: italic; font-size: 0.9em; }}
     </style>
 </head>
-<body><div class="container"><h1>{title}</h1><div class="content">{meta_html}{extras_html}<h2>Changelog</h2>{formatted_changelog}</div></div></body>
+<body><div class="container"><h1>{title}</h1><div class="content">{meta_html}{gog_messages_html}{game_items_html}{extras_html}{changelog_html}</div></div></body>
 </html>"""
     print(html_output)
 
