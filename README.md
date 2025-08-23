@@ -1,6 +1,3 @@
-Of course. Here is the complete source code for the `README.md` file. You can copy this directly into a new `README.md` file in your project folder, and GitHub will format it correctly.
-
-````markdown
 # GOG Info Converter
 
 A Python script to convert GOG.com `!info.txt` files into beautifully styled, readable HTML files. It includes a dark theme and can be integrated with the Dolphin file manager for easy, one-click conversions.
