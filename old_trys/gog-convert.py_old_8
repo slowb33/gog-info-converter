@@ -1,0 +1,137 @@
+#!/usr/bin/env python
+import sys
+import re
+import os
+
+try:
+    import markdown
+except ImportError:
+    print("Error: The 'markdown' library is required. Please install it using your system's package manager (e.g., 'sudo pacman -S python-markdown') or with pip/uv.", file=sys.stderr)
+    sys.exit(1)
+
+def format_changelog(changelog_text):
+    """
+    Converts changelog text to HTML using the markdown library.
+    If it already contains HTML, it's returned as is.
+    """
+    text = changelog_text.strip()
+    if re.search(r'<(h[1-6]|ul|li|hr|p|div|table)>', text, re.IGNORECASE):
+        return text
+    html = markdown.markdown(text, extensions=['tables', 'fenced_code'])
+    return html
+
+def create_html_from_info(file_path):
+    """
+    Reads a GOG !info.txt file and converts it into a complete HTML file with a dark theme,
+    then prints it to standard output.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except FileNotFoundError:
+        print(f"Error: File not found at {file_path}", file=sys.stderr)
+        sys.exit(1)
+
+    # --- New, more robust parsing logic ---
+    # Split the content by section headers (e.g., "game items.....:")
+    # The regex looks for a word/space combo at the start of a line, followed by at least 3 dots and a colon.
+    sections = re.split(r'\n(^[a-zA-Z ]+\s*\.{3,}:)', content, flags=re.MULTILINE | re.IGNORECASE)
+
+    metadata_part = sections[0]
+    
+    section_dict = {}
+    # The list is [metadata, header1, content1, header2, content2, ...]
+    if len(sections) > 1:
+        for i in range(1, len(sections), 2):
+            # Normalize header: "game items.....:" -> "game items"
+            header = sections[i].strip().lower()
+            normalized_header = re.sub(r'\s*\.*:', '', header)
+            section_dict[normalized_header] = sections[i+1].strip()
+
+    gog_messages_content = section_dict.get('gog messages')
+    game_items_content = section_dict.get('game items')
+    extras_content = section_dict.get('extras')
+    changelog_content = section_dict.get('changelog')
+
+    # --- Title and Metadata Parsing (from the first part) ---
+    title_match = re.search(r"title\s*\.{5,}\s*(.*)", metadata_part, re.IGNORECASE)
+    title = title_match.group(1).strip().replace('_', ' ').title() if title_match else "Game Information"
+
+    meta_html = "<h2>Game Details</h2>\n<dl>\n"
+    meta_regex = re.compile(r"^(.+?)\s*\.{5,}\s*(.+)$", re.MULTILINE)
+    for match in meta_regex.finditer(metadata_part):
+        key = match.group(1).strip().replace('_', ' ').title()
+        value = match.group(2).strip()
+        if key.lower() == 'title': continue
+        if key.lower() == 'url':
+            meta_html += f"  <dt>{key}</dt>\n  <dd><a href=\"{value}\" target=\"_blank\">{value}</a></dd>\n"
+        else:
+            meta_html += f"  <dt>{key}</dt>\n  <dd>{value}</dd>\n"
+    meta_html += "</dl>\n"
+
+    # --- GOG Messages Section ---
+    gog_messages_html = ""
+    if gog_messages_content:
+        gog_messages_html = f"<h2>GOG Messages</h2>\n<div class=\"message-box\">{markdown.markdown(gog_messages_content)}</div>\n"
+
+    # --- Game Items Section (handles subsections) ---
+    game_items_html = ""
+    if game_items_content:
+        game_items_html = "<h2>Game Items</h2>\n"
+        # The content is pre-formatted, so we wrap it in a <pre> tag to preserve whitespace
+        game_items_html += f"<pre><code>{game_items_content}</code></pre>\n"
+
+    # --- Extras Section ---
+    extras_html = ""
+    if extras_content:
+        extras_html = "<h2>Extras</h2>\n<ul>\n"
+        for extra in extras_content.strip().splitlines():
+            if extra.strip():
+                clean_extra = re.sub(r"\[(.*?)\] -- ", r"<strong>\1:</strong> ", extra.strip())
+                extras_html += f"  <li>{clean_extra}</li>\n"
+        extras_html += "</ul>\n"
+
+    # --- Changelog Section ---
+    changelog_html = ""
+    if changelog_content:
+        formatted_changelog = format_changelog(changelog_content)
+        changelog_html = f"<h2>Changelog</h2>{formatted_changelog}"
+
+    # --- Final HTML Assembly ---
+    html_output = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"><title>{title}</title>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; margin: 0; background-color: #1e1e1e; color: #d4d4d4; }}
+        .container {{ max-width: 800px; margin: 2em auto; background: #2d2d2d; padding: 2em; border-radius: 8px; border: 1px solid #444; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }}
+        h1, h2, h3 {{ color: #ffffff; border-bottom: 1px solid #555; padding-bottom: 0.3em; }}
+        h4, h5 {{ color: #fafafa; margin-top: 1.5em; }}
+        p {{ margin-top: 0; margin-bottom: 0.8em; }}
+        dt {{ font-weight: bold; color: #cccccc; float: left; width: 120px; clear: left; }}
+        dd {{ margin-left: 140px; margin-bottom: 10px; }}
+        a {{ color: #68a0ff; text-decoration: none; }}
+        a:hover {{ text-decoration: underline; }}
+        strong {{ color: #c8c8c8; }}
+        hr {{ border: 0; border-top: 1px solid #555; margin: 1.5em 0; }}
+        ul, ol {{ padding-left: 20px; }}
+        li {{ margin-bottom: 0.2em; }}
+        li p {{ margin-bottom: 0.1em; }}
+        table {{ border-collapse: collapse; width: 100%; margin-bottom: 1em; }}
+        th, td {{ border: 1px solid #555; padding: 8px; text-align: left; }}
+        th {{ background-color: #3a3a3a; font-weight: bold; }}
+        code, pre {{ background-color: #252526; font-family: monospace; }}
+        pre {{ padding: 1em; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; }}
+        .message-box {{ background-color: #3a3a3a; border-left: 4px solid #68a0ff; padding: 0.5em 1.5em; margin-bottom: 1.5em; border-radius: 4px; }}
+    </style>
+</head>
+<body><div class="container"><h1>{title}</h1><div class="content">{meta_html}{gog_messages_html}{game_items_html}{extras_html}{changelog_html}</div></div></body>
+</html>"""
+    print(html_output)
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python gog-convert.py <path_to_!info.txt>", file=sys.stderr)
+        sys.exit(1)
+    create_html_from_info(sys.argv[1])
+

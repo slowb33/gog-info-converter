@@ -66,38 +66,31 @@ def create_html_from_info(file_path):
         print(f"Error: File not found at {file_path}", file=sys.stderr)
         sys.exit(1)
 
-    # --- Line-by-line parsing logic for robustness ---
-    lines = content.splitlines()
+    # --- New, more robust parsing logic ---
+    # Find all major section headers and their content using a positive lookahead
+    section_pattern = re.compile(
+        r'^(?P<header>[a-zA-Z ]+\s*\.{3,}:)\n(?P<content>.*?)(?=\n^[a-zA-Z ]+\s*\.{3,}:|\Z)',
+        re.MULTILINE | re.DOTALL | re.IGNORECASE
+    )
     
-    section_buffers = {
-        'metadata': [],
-        'game items': [],
-        'extras': [],
-        'changelog': [],
-        'gog messages': []
-    }
+    matches = list(section_pattern.finditer(content))
+    section_dict = {}
     
-    current_section_key = 'metadata'
-    header_pattern = re.compile(r'^([a-zA-Z ]+)\s*\.{3,}:', re.IGNORECASE)
+    for match in matches:
+        header = match.group('header').strip().lower()
+        normalized_header = re.sub(r'\s*\.*:', '', header)
+        section_dict[normalized_header] = match.group('content').strip()
 
-    for line in lines:
-        match = header_pattern.match(line)
-        # Check if the line is a section header
-        if match:
-            section_name = match.group(1).strip().lower()
-            if section_name in section_buffers:
-                current_section_key = section_name
-                continue  # Skip adding the header line itself to the content
+    # Metadata is everything before the first section header
+    if matches:
+        metadata_part = content[:matches[0].start()].strip()
+    else:
+        metadata_part = content.strip()
 
-        # Append the line to the buffer for the current section
-        section_buffers[current_section_key].append(line)
-
-    # Join the collected lines for each section
-    metadata_part = '\n'.join(section_buffers['metadata'])
-    game_items_content = '\n'.join(section_buffers['game items'])
-    extras_content = '\n'.join(section_buffers['extras'])
-    changelog_content = '\n'.join(section_buffers['changelog'])
-    gog_messages_content = '\n'.join(section_buffers['gog messages'])
+    gog_messages_content = section_dict.get('gog messages')
+    game_items_content = section_dict.get('game items')
+    extras_content = section_dict.get('extras')
+    changelog_content = section_dict.get('changelog')
 
     # --- Title and Metadata Parsing ---
     title_match = re.search(r"title\s*\.{5,}\s*(.*)", metadata_part, re.IGNORECASE)
@@ -117,17 +110,17 @@ def create_html_from_info(file_path):
 
     # --- GOG Messages Section ---
     gog_messages_html = ""
-    if gog_messages_content.strip():
+    if gog_messages_content:
         gog_messages_html = f"<h2>GOG Messages</h2>\n<div class=\"message-box\">{markdown.markdown(gog_messages_content)}</div>\n"
 
     # --- Game Items Section (uses the new detailed formatter) ---
     game_items_html = ""
-    if game_items_content.strip():
+    if game_items_content:
         game_items_html = "<h2>Game Items</h2>\n" + format_game_items(game_items_content)
 
     # --- Extras Section ---
     extras_html = ""
-    if extras_content.strip():
+    if extras_content:
         extras_html = "<h2>Extras</h2>\n<ul>\n"
         for extra in extras_content.strip().splitlines():
             if extra.strip():
@@ -137,7 +130,7 @@ def create_html_from_info(file_path):
 
     # --- Changelog Section ---
     changelog_html = ""
-    if changelog_content.strip():
+    if changelog_content:
         formatted_changelog = format_changelog(changelog_content)
         changelog_html = f"<h2>Changelog</h2>{formatted_changelog}"
 
@@ -147,21 +140,19 @@ def create_html_from_info(file_path):
 <head>
     <meta charset="UTF-8"><title>{title}</title>
     <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.4; margin: 0; background-color: #1e1e1e; color: #d4d4d4; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; margin: 0; background-color: #1e1e1e; color: #d4d4d4; }}
         .container {{ max-width: 800px; margin: 2em auto; background: #2d2d2d; padding: 2em; border-radius: 8px; border: 1px solid #444; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }}
-        h1 {{ font-size: 1.8em; margin-top: 0; color: #ffffff; border-bottom: 1px solid #555; padding-bottom: 0.3em; }}
-        h2 {{ font-size: 1.4em; color: #ffffff; border-bottom: 1px solid #555; padding-bottom: 0.3em; }}
-        h3 {{ font-size: 1.1em; color: #ffffff; border-bottom: 1px solid #555; padding-bottom: 0.3em; }}
-        h4, h5 {{ color: #fafafa; margin-top: 1.2em; font-size: 1.0em; }}
-        p {{ margin-top: 0; margin-bottom: 0.7em; }}
+        h1, h2, h3 {{ color: #ffffff; border-bottom: 1px solid #555; padding-bottom: 0.3em; }}
+        h4, h5 {{ color: #fafafa; margin-top: 1.5em; }}
+        p {{ margin-top: 0; margin-bottom: 0.8em; }}
         dt {{ font-weight: bold; color: #cccccc; float: left; width: 120px; clear: left; }}
-        dd {{ margin-left: 140px; margin-bottom: 8px; }}
+        dd {{ margin-left: 140px; margin-bottom: 10px; }}
         a {{ color: #68a0ff; text-decoration: none; }}
         a:hover {{ text-decoration: underline; }}
         strong {{ color: #c8c8c8; }}
         hr {{ border: 0; border-top: 1px solid #555; margin: 1.5em 0; }}
         ul, ol {{ padding-left: 20px; }}
-        li {{ margin-bottom: 0.1em; }}
+        li {{ margin-bottom: 0.5em; }}
         li p {{ margin-bottom: 0.1em; }}
         table {{ border-collapse: collapse; width: 100%; margin-bottom: 1em; }}
         th, td {{ border: 1px solid #555; padding: 8px; text-align: left; }}
@@ -169,17 +160,10 @@ def create_html_from_info(file_path):
         code, pre {{ background-color: #252526; font-family: monospace; }}
         pre {{ padding: 1em; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; }}
         .message-box {{ background-color: #3a3a3a; border-left: 4px solid #68a0ff; padding: 0.5em 1.5em; margin-bottom: 1.5em; border-radius: 4px; }}
-        .version-info {{ color: #9e9e9e; font-style: italic; font-size: 0.9em; }}
-        footer {{ text-align: center; margin-top: 2em; padding-top: 1em; border-top: 1px solid #444; font-size: 0.8em; color: #888; }}
+        .version-info {{ color: #9e9e9e; font-style: italic; }}
     </style>
 </head>
-<body>
-    <div class="container">
-        <h1>{title}</h1>
-        <div class="content">{meta_html}{gog_messages_html}{game_items_html}{extras_html}{changelog_html}</div>
-        <footer>Converter Script made by Google Gemini 2.5Pro, inspired by Dirk Adam.</footer>
-    </div>
-</body>
+<body><div class="container"><h1>{title}</h1><div class="content">{meta_html}{gog_messages_html}{game_items_html}{extras_html}{changelog_html}</div></div></body>
 </html>"""
     print(html_output)
 
